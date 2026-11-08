@@ -15,15 +15,17 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import re
+import os
 
+
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
 loader = TextLoader(
-    "plants.txt",
+    os.path.join(BASE_DIR, "plants.txt"),
     encoding="utf-8"
 )
 
 loaded_documents = loader.load()
-
 
 documents = [
     Document(
@@ -33,7 +35,6 @@ documents = [
     for doc in loaded_documents
 ]
 
-
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size=500,
     chunk_overlap=50,
@@ -42,33 +43,28 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 chunks = text_splitter.split_documents(documents)
 
-
 context = "\n\n".join(
     chunk.page_content for chunk in chunks
 )
-
 
 prompt = ChatPromptTemplate([
     (
         "system",
         """
-        Ты AI Plant Doctor — умный помощник по уходу
-        за комнатными растениями.
+        Ты AI Plant Doctor — помощник по уходу за комнатными растениями.
 
-        ОБЯЗАТЕЛЬНЫЕ ПРАВИЛА:
-
+        Строгие правила:
         1. Отвечай исключительно на русском языке.
-        2. Не используй английские слова.
-        3. Отвечай простыми и понятными словами.
-        4. Используй только информацию из базы знаний.
-        5. Ничего не придумывай.
-        6. Не используй Markdown и списки.
-        7. Отвечай одним связным текстом.
-        8. Не добавляй приветствия.
-        9. Если информации нет, отвечай:
-        Я не знаю.
+        2. Запрещено использовать английские слова.
+        3. Используй только информацию из базы знаний.
+        4. Не добавляй информацию от себя.
+        5. Не повторяй одну и ту же мысль.
+        6. Отвечай коротко, максимум 2 предложения.
+        7. Не используй приветствия и заключения.
+        8. Не используй списки и Markdown.
+        9. Если информации нет, отвечай: Я не знаю.
 
-        База знаний:
+        Информация о растениях:
         {context}
         """
     ),
@@ -78,21 +74,17 @@ prompt = ChatPromptTemplate([
     )
 ])
 
-
 model = ChatOllama(
     model="llama3.2:latest",
     temperature=0
 )
-
 
 prepare_data = RunnableParallel({
     "context": RunnableLambda(lambda x: context),
     "text": RunnablePassthrough()
 })
 
-
 chain = prepare_data | prompt | model | StrOutputParser()
-
 
 test_app = FastAPI(
     title="AI Plant Doctor",
@@ -128,8 +120,23 @@ async def questions_for_answer(data: QuestionSchema):
     try:
         answer = chain.invoke(question)
 
-        answer = re.sub(r"\n+", " ", answer)
+        replacements = {
+            "plenty": "достаточно",
+            "completely": "полностью",
+            "beautiful": "красивым",
+            "maintain": "поддерживать"
+        }
 
+        for word, replacement in replacements.items():
+            answer = re.sub(
+                rf"\b{word}\b",
+                replacement,
+                answer,
+                flags=re.IGNORECASE
+            )
+
+        answer = re.sub(r"\b[A-Za-z]+\b", "", answer)
+        answer = re.sub(r"\n+", " ", answer)
         answer = re.sub(r"\s{2,}", " ", answer).strip()
 
         return {
